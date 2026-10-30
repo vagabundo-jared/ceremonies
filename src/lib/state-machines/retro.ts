@@ -1,7 +1,9 @@
 /**
  * Retro ceremony state machine.
  *
- * Phases: haunting → writing → grouping → labeling → voting → discussing → committing → closed
+ * Phases: haunting → writing → grouping → voting → discussing → committing → closed
+ * Grouping includes naming. "labeling" remains a phase value so a room saved
+ * in that step can still move, rename, and advance to voting.
  *
  * Key design decisions:
  * - Writing phase is TRUE anonymous: server strips sender identity, assigns random IDs
@@ -158,6 +160,10 @@ export type RetroEvent =
 /** How long the facilitator must be offline before someone else can claim facilitation. */
 export const CLAIM_GRACE_MS = 60_000;
 
+/** Discussion clock bounds. The facilitator picks a length inside this range. */
+export const MIN_TIMER_SECONDS = 60;
+export const MAX_TIMER_SECONDS = 60 * 60;
+
 /** Events still accepted while a retro is paused. Everything else is ignored. */
 const ALLOWED_WHILE_PAUSED: ReadonlySet<RetroEvent["type"]> = new Set([
   "PARTICIPANT_JOIN",
@@ -237,7 +243,6 @@ const PHASE_ORDER: ReadonlyArray<RetroPhase> = [
   "haunting",
   "writing",
   "grouping",
-  "labeling",
   "voting",
   "discussing",
   "committing",
@@ -245,9 +250,28 @@ const PHASE_ORDER: ReadonlyArray<RetroPhase> = [
 ];
 
 function nextPhase(current: RetroPhase): RetroPhase | null {
+  if (current === "labeling") return "voting";
   const idx = PHASE_ORDER.indexOf(current);
   if (idx === -1 || idx >= PHASE_ORDER.length - 1) return null;
   return PHASE_ORDER[idx + 1];
+}
+
+/** Cards left off a theme become their own one-card theme, named with the card text. */
+function withUngroupedAsThemes(state: RetroState): RetroState {
+  const groupedCardIds = new Set(state.groups.flatMap((g) => g.cardIds));
+  const ungrouped = state.cards.filter((c) => !groupedCardIds.has(c.id));
+  if (ungrouped.length === 0) return state;
+  const newGroups = ungrouped.map((c) => ({
+    id: `auto-${c.id}`,
+    label: c.text,
+    cardIds: [c.id] as ReadonlyArray<string>,
+    voteCount: 0,
+  }));
+  return { ...state, groups: [...state.groups, ...newGroups] };
+}
+
+function isGroupStep(phase: RetroPhase): boolean {
+  return phase === "grouping" || phase === "labeling";
 }
 
 // ── Transition ──
@@ -324,22 +348,10 @@ export function transition(state: RetroState, event: RetroEvent): RetroState {
         };
       }
 
-      // When advancing to labeling, auto-group any ungrouped cards so the
-      // facilitator can review and name every cluster before voting.
-      if (next === "labeling") {
-        const groupedCardIds = new Set(state.groups.flatMap((g) => g.cardIds));
-        const ungrouped = state.cards.filter((c) => !groupedCardIds.has(c.id));
-        const newGroups = ungrouped.map((c) => ({
-          id: `auto-${c.id}`,
-          label: c.text,
-          cardIds: [c.id] as ReadonlyArray<string>,
-          voteCount: 0,
-        }));
-        return {
-          ...state,
-          phase: next,
-          groups: [...state.groups, ...newGroups],
-        };
+      // Leaving the group step names any leftover card as its own theme
+      // so voting has a theme for every card.
+      if (isGroupStep(state.phase) && next === "voting") {
+        return { ...withUngroupedAsThemes(state), phase: next };
       }
 
       return { ...state, phase: next };
@@ -377,7 +389,7 @@ export function transition(state: RetroState, event: RetroEvent): RetroState {
     }
 
     case "MOVE_CARD_POSITION": {
-      if (state.phase !== "grouping") return state;
+      if (!isGroupStep(state.phase)) return state;
       const newPositions = {
         ...state.cardPositions,
         [event.cardId]: { x: event.x, y: event.y },
@@ -404,7 +416,7 @@ export function transition(state: RetroState, event: RetroEvent): RetroState {
     }
 
     case "CREATE_GROUP": {
-      if (state.phase !== "grouping") return state;
+      if (!isGroupStep(state.phase)) return state;
       return {
         ...state,
         groups: [...state.groups, event.group],
@@ -412,7 +424,7 @@ export function transition(state: RetroState, event: RetroEvent): RetroState {
     }
 
     case "RENAME_GROUP": {
-      if (state.phase !== "labeling") return state;
+      if (!isGroupStep(state.phase)) return state;
       if (!isFacilitator(state, event.facilitatorId)) return state;
       const target = state.groups.find((g) => g.id === event.groupId);
       if (!target) return state;
@@ -427,7 +439,7 @@ export function transition(state: RetroState, event: RetroEvent): RetroState {
     }
 
     case "MOVE_CARD_TO_GROUP": {
-      if (state.phase !== "grouping") return state;
+      if (!isGroupStep(state.phase)) return state;
       // Remove from all other groups first
       const cleaned = state.groups.map((g) => ({
         ...g,
@@ -444,7 +456,7 @@ export function transition(state: RetroState, event: RetroEvent): RetroState {
     }
 
     case "REMOVE_CARD_FROM_GROUP": {
-      if (state.phase !== "grouping") return state;
+      if (!isGroupStep(state.phase)) return state;
       return {
         ...state,
         groups: state.groups.map((g) =>
@@ -502,6 +514,14 @@ export function transition(state: RetroState, event: RetroEvent): RetroState {
 
     case "SET_TIMER": {
       if (!isFacilitator(state, event.facilitatorId)) return state;
+      if (state.phase !== "discussing") return state;
+      if (!Number.isInteger(event.seconds)) return state;
+      if (
+        event.seconds < MIN_TIMER_SECONDS ||
+        event.seconds > MAX_TIMER_SECONDS
+      ) {
+        return state;
+      }
       return {
         ...state,
         discussion: {

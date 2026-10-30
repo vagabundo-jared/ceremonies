@@ -55,3 +55,6 @@ promo/src/music.mp3
 
 # Dogfood test screenshots (regenerated)
 dogfood-output/
+
+# clerk configuration (can include secrets)
+/.clerk/

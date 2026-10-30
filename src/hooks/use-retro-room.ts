@@ -106,6 +106,11 @@ interface UseRetroRoomResult {
 
   /** True if the automatic DB save after closing failed. Show recovery UI. */
   readonly saveFailed: boolean;
+
+  readonly setSlackWebhook: (url: string) => void;
+  readonly slackHookConfigured: boolean;
+  readonly slackHookNotice: "saved" | "cleared" | "rejected" | null;
+  readonly slackPost: "unset" | "sent" | "failed" | null;
 }
 
 function generateId(): string {
@@ -128,6 +133,14 @@ export function useRetroRoom({
     ReadonlyArray<string>
   >([]);
   const [saveFailed, setSaveFailed] = useState(false);
+  const [slackHookConfigured, setSlackHookConfigured] = useState(false);
+  const [slackHookNotice, setSlackHookNotice] = useState<
+    "saved" | "cleared" | "rejected" | null
+  >(null);
+  const [slackPost, setSlackPost] = useState<
+    "unset" | "sent" | "failed" | null
+  >(null);
+  const slackSavePending = useRef(false);
   const stateRef = useRef(state);
 
   useEffect(() => {
@@ -177,8 +190,33 @@ export function useRetroRoom({
         setState(data.state);
         setMyId(data.you);
         setMyAnonymousId(data.anonymousId);
+        setSlackHookConfigured(Boolean(data.slackHookConfigured));
+        if (
+          data.slackResult === "sent" ||
+          data.slackResult === "failed" ||
+          data.slackResult === "unset"
+        ) {
+          setSlackPost(data.slackResult);
+        }
       } else if (data.type === "update") {
         setState(data.state);
+      } else if (data.type === "slack_hook") {
+        setSlackHookConfigured(Boolean(data.configured));
+        if (data.rejected) {
+          slackSavePending.current = false;
+          setSlackHookNotice("rejected");
+        } else if (slackSavePending.current) {
+          slackSavePending.current = false;
+          setSlackHookNotice(data.configured ? "saved" : "cleared");
+        }
+      } else if (data.type === "slack_result") {
+        if (
+          data.status === "sent" ||
+          data.status === "failed" ||
+          data.status === "unset"
+        ) {
+          setSlackPost(data.status);
+        }
       } else if (data.type === "cursor") {
         setCursors((prev) => {
           const next = new Map(prev);
@@ -350,6 +388,15 @@ export function useRetroRoom({
 
   // ── Discussion ──
 
+  const setSlackWebhook = useCallback(
+    (url: string) => {
+      slackSavePending.current = true;
+      setSlackHookNotice(null);
+      send({ type: "SET_SLACK_WEBHOOK", url });
+    },
+    [send],
+  );
+
   const setTimer = useCallback(
     (seconds: number) => {
       send({ type: "SET_TIMER", facilitatorId: myId, seconds });
@@ -492,5 +539,9 @@ export function useRetroRoom({
     claimFacilitation,
     closeRetro,
     saveFailed,
+    setSlackWebhook,
+    slackHookConfigured,
+    slackHookNotice,
+    slackPost,
   };
 }

@@ -23,6 +23,7 @@ import { WritingPhase } from "@/components/retro/writing-phase";
 import { GroupingPhase } from "@/components/retro/grouping-phase";
 import { VotingPhase } from "@/components/retro/voting-phase";
 import { DiscussActPhase } from "@/components/retro/discuss-act-phase";
+import { SlackHookField } from "@/components/retro/slack-hook-field";
 import { useRetroRoom } from "@/hooks/use-retro-room";
 import {
   getRetroStats,
@@ -175,6 +176,10 @@ function RetroRoom({
     myVoteCount,
     setTimer,
     toggleTimer,
+    setSlackWebhook,
+    slackHookConfigured,
+    slackHookNotice,
+    slackPost,
     nextTopic,
     addActionItem,
     removeActionItem,
@@ -273,6 +278,11 @@ function RetroRoom({
                 <span className="rounded-md bg-coffee/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-coffee">
                   Facilitator
                 </span>
+                <SlackHookField
+                  configured={slackHookConfigured}
+                  notice={slackHookNotice}
+                  onSave={setSlackWebhook}
+                />
                 <TransferFacilitationDialog
                   participants={state.participants}
                   myId={myId ?? ""}
@@ -403,12 +413,16 @@ function RetroRoom({
 
         {(state.phase === "discussing" || state.phase === "committing") && (
           <DiscussActPhase
+            phase={state.phase}
+            discussion={state.discussion}
             groups={state.groups}
             cards={state.cards}
             rankedGroupIds={state.rankedGroupIds}
             actionItems={state.actionItems}
             participants={state.participants}
             isFacilitator={isFacilitator}
+            onSetTimer={setTimer}
+            onToggleTimer={toggleTimer}
             onAddItem={(text, assignees, groupId) =>
               addActionItem(text, assignees, groupId)
             }
@@ -423,6 +437,7 @@ function RetroRoom({
             state={state}
             isFacilitator={isFacilitator}
             saveFailed={saveFailed}
+            slackPost={slackPost}
             onDone={onLeave}
           />
         )}
@@ -605,12 +620,14 @@ function ClosedPhase({
   state,
   isFacilitator,
   saveFailed,
+  slackPost,
   onDone,
 }: {
   roomId: string;
   state: RetroState;
   isFacilitator: boolean;
   saveFailed: boolean;
+  slackPost: "unset" | "sent" | "failed" | null;
   onDone: () => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -727,6 +744,15 @@ function ClosedPhase({
         <p className="mt-2 text-sm text-muted-foreground">
           Great session. Here&apos;s your snapshot.
         </p>
+        {isFacilitator && (
+          <p className="mt-2 text-xs font-bold text-muted-foreground">
+            {slackPost === "sent" && "Posted to Slack."}
+            {slackPost === "failed" &&
+              "Slack post failed. The retro is still closed."}
+            {slackPost === "unset" && "No Slack hook was set."}
+            {slackPost === null && "Waiting for the Slack result."}
+          </p>
+        )}
       </div>
 
       {/* Save failure warning */}

@@ -6,6 +6,13 @@ import {
   type RetroEvent,
   type RetroCard,
 } from "../src/lib/state-machines/retro";
+import {
+  buildSlackRetroMessage,
+  isSlackIncomingWebhook,
+  nextSlackWebhook,
+} from "../src/lib/slack-hook";
+
+type SlackResult = "sent" | "failed" | "unset";
 
 /**
  * PartyServer (Cloudflare Durable Object) server for retro rooms.
@@ -33,6 +40,10 @@ function generateId(): string {
 
 export class RetroServer extends Server<Env> {
   state: RetroState = createInitialState("");
+  /** Incoming webhook. Stored beside the retro, never on RetroState. */
+  private slackWebhook: string | null = null;
+  /** Result of the close-time Slack post, kept so a reconnect can show it. */
+  private slackResult: SlackResult | null = null;
   timerInterval: ReturnType<typeof setInterval> | null = null;
   /** Ephemeral set of participantIds currently typing. Never persisted. */
   private typingParticipants: Set<string> = new Set();
@@ -54,6 +65,16 @@ export class RetroServer extends Server<Env> {
       ) {
         this.startTimerInterval();
       }
+    }
+    const savedHook = await this.ctx.storage.get<string>("slackWebhook");
+    if (typeof savedHook === "string" && isSlackIncomingWebhook(savedHook)) {
+      this.slackWebhook = savedHook;
+    } else if (savedHook !== undefined) {
+      await this.ctx.storage.delete("slackWebhook");
+    }
+    const savedResult = await this.ctx.storage.get<SlackResult>("slackResult");
+    if (savedResult === "sent" || savedResult === "failed" || savedResult === "unset") {
+      this.slackResult = savedResult;
     }
   }
 
@@ -114,6 +135,8 @@ export class RetroServer extends Server<Env> {
         state: this.state,
         you: participantId,
         anonymousId, // so client knows which cards are "theirs"
+        slackHookConfigured: this.slackWebhook !== null,
+        slackResult: this.slackResult,
       }),
     );
 
@@ -159,6 +182,36 @@ export class RetroServer extends Server<Env> {
     if (parsed.type === "TYPING_STOP") {
       this.typingParticipants.delete(connState.participantId);
       this.broadcastTyping();
+      return;
+    }
+
+    if (parsed.type === "SET_SLACK_WEBHOOK") {
+      if (connState.participantId !== this.state.facilitatorId) return;
+      if (typeof parsed.url !== "string") return;
+      const update = nextSlackWebhook(parsed.url);
+      if (update.kind === "reject") {
+        sender.send(
+          JSON.stringify({
+            type: "slack_hook",
+            configured: this.slackWebhook !== null,
+            rejected: true,
+          }),
+        );
+        return;
+      }
+      if (update.kind === "clear") {
+        this.slackWebhook = null;
+        await this.ctx.storage.delete("slackWebhook");
+      } else {
+        this.slackWebhook = update.url;
+        await this.ctx.storage.put("slackWebhook", update.url);
+      }
+      this.broadcast(
+        JSON.stringify({
+          type: "slack_hook",
+          configured: this.slackWebhook !== null,
+        }),
+      );
       return;
     }
 
@@ -242,6 +295,7 @@ export class RetroServer extends Server<Env> {
           console.error("[retro] Failed to save to DB:", err);
           this.broadcast(JSON.stringify({ type: "save_error" }));
         });
+        void this.postToSlack();
       }
     }
   }
@@ -291,7 +345,10 @@ export class RetroServer extends Server<Env> {
           return new Response("Unauthorized", { status: 401 });
         }
         this.state = createInitialState("");
+        this.slackWebhook = null;
+        this.slackResult = null;
         this.stopTimerInterval();
+        await this.ctx.storage.delete(["slackWebhook", "slackResult"]);
         await this.persist();
         this.broadcastState();
         return new Response("OK");
@@ -361,6 +418,28 @@ export class RetroServer extends Server<Env> {
   }
 
   // ── DB Persistence ──
+
+  /** Posts the close summary. A failure is reported and does not undo close. */
+  private async postToSlack() {
+    const url = this.slackWebhook;
+    let status: SlackResult = "unset";
+    if (url) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: buildSlackRetroMessage(this.state) }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        status = res.ok ? "sent" : "failed";
+      } catch {
+        status = "failed";
+      }
+    }
+    this.slackResult = status;
+    await this.ctx.storage.put("slackResult", status);
+    this.broadcast(JSON.stringify({ type: "slack_result", status }));
+  }
 
   private async saveToDatabase() {
     // Call the Next.js API route to persist the retro

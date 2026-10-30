@@ -99,7 +99,9 @@ export function GroupingPhase({
   const [hasScattered, setHasScattered] = useState(false);
 
   const canvasHeight = getCanvasHeight(cards.length);
-  const isLabeling = phase === "labeling";
+  // Grouping and naming are one step. An old room still on "labeling" uses it too.
+  const canNameThemes =
+    isFacilitator && (phase === "grouping" || phase === "labeling");
 
   // Safe access: old state may not have cardPositions at all
   const safePositions = cardPositions ?? {};
@@ -134,9 +136,7 @@ export function GroupingPhase({
       const y = (e.clientY - rect.top) * scaleY;
       onSendCursor(x, y);
 
-      // If dragging, move the card. Cards lock in place during labeling so the
-      // facilitator can focus on names without changing groups.
-      if (dragging && !isLabeling) {
+      if (dragging) {
         const newX = Math.max(
           0,
           Math.min(CANVAS_WIDTH - CARD_WIDTH, x - dragging.offsetX),
@@ -148,18 +148,18 @@ export function GroupingPhase({
         onMoveCard(dragging.cardId, newX, newY);
       }
     },
-    [onSendCursor, onMoveCard, dragging, canvasHeight, isLabeling],
+    [onSendCursor, onMoveCard, dragging, canvasHeight],
   );
 
   const handlePointerDown = useCallback(
     (cardId: string, e: React.PointerEvent) => {
-      if (!canvasRef.current || isLabeling) return;
+      if (!canvasRef.current) return;
       const rect = canvasRef.current.getBoundingClientRect();
       const scaleX = CANVAS_WIDTH / rect.width;
       const scaleY = canvasHeight / rect.height;
       const canvasX = (e.clientX - rect.left) * scaleX;
       const canvasY = (e.clientY - rect.top) * scaleY;
-      const pos = safePositions[cardId];
+      const pos = (cardPositions ?? {})[cardId];
       if (!pos) return;
       setDragging({
         cardId,
@@ -168,7 +168,7 @@ export function GroupingPhase({
       });
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
     },
-    [cardPositions, canvasHeight, isLabeling],
+    [cardPositions, canvasHeight],
   );
 
   const handlePointerUp = useCallback(() => {
@@ -208,17 +208,16 @@ export function GroupingPhase({
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-display text-3xl tracking-ceremony">
-            {isLabeling ? "Label groups" : "Group cards"}
+            Group and name
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {isLabeling
-              ? "Facilitator: review each group name before the team votes."
-              : "Drag cards close together to form groups. Everyone moves cards in real-time."}
+            Drag cards together to form a theme. The facilitator names each theme
+            before voting.
           </p>
         </div>
         {isFacilitator && (
           <Button onClick={onAdvance} className="relative z-10 h-11 shrink-0">
-            {isLabeling ? "Move to voting" : "Move to labeling"}
+            Move to voting
           </Button>
         )}
       </div>
@@ -256,7 +255,7 @@ export function GroupingPhase({
             height={bounds.height}
             canvasWidth={CANVAS_WIDTH}
             canvasHeight={canvasHeight}
-            canRename={isLabeling && isFacilitator}
+            canRename={canNameThemes}
             onRename={onRenameGroup}
           />
         ))}
@@ -278,9 +277,7 @@ export function GroupingPhase({
                 style.bg,
                 isDragging
                   ? "shadow-hard-lg z-30 scale-105 cursor-grabbing"
-                  : isLabeling
-                    ? "shadow-hard-sm z-10 cursor-default"
-                    : "shadow-hard-sm z-10 cursor-grab hover:shadow-hard",
+                  : "shadow-hard-sm z-10 cursor-grab hover:shadow-hard",
               )}
               style={{
                 left: `${(pos.x / CANVAS_WIDTH) * 100}%`,
@@ -342,7 +339,7 @@ export function GroupingPhase({
             {groups.length} group{groups.length !== 1 ? "s" : ""} formed:
           </span>
           {groups.map((g) =>
-            isLabeling && isFacilitator ? (
+            canNameThemes ? (
               <RenameableChip key={g.id} group={g} onRename={onRenameGroup} />
             ) : (
               <span

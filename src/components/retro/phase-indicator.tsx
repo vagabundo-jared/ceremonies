@@ -17,14 +17,14 @@ const PHASE_STEPS: ReadonlyArray<RetroPhase> = [
   "haunting",
   "writing",
   "grouping",
-  "labeling",
   "voting",
   "discussing",
   "committing",
 ];
 
 export function PhaseIndicator({ phase }: { phase: RetroPhase }) {
-  const currentIdx = PHASE_STEPS.indexOf(phase);
+  const shown: RetroPhase = phase === "labeling" ? "grouping" : phase;
+  const currentIdx = PHASE_STEPS.indexOf(shown);
 
   if (phase === "lobby" || phase === "closed") {
     return (
@@ -37,7 +37,7 @@ export function PhaseIndicator({ phase }: { phase: RetroPhase }) {
   return (
     <div className="flex items-center gap-1.5 whitespace-nowrap">
       {PHASE_STEPS.map((step, i) => {
-        const isActive = step === phase;
+        const isActive = step === shown;
         const isPast = i < currentIdx;
         return (
           <div key={step} className="flex items-center gap-1.5">

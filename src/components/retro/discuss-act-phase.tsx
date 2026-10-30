@@ -7,6 +7,12 @@ import type {
   ActionItem,
   Participant,
   CardCategory,
+  DiscussionState,
+  RetroPhase,
+} from "@/lib/state-machines/retro";
+import {
+  MAX_TIMER_SECONDS,
+  MIN_TIMER_SECONDS,
 } from "@/lib/state-machines/retro";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,15 +23,19 @@ import {
   GhostIcon,
 } from "@/components/shared/icons";
 import { cn } from "@/lib/utils";
-import { Plus, Xmark, User, Check } from "iconoir-react";
+import { Plus, Xmark, User, Check, Play, Pause } from "iconoir-react";
 
 interface DiscussActPhaseProps {
+  readonly phase: RetroPhase;
+  readonly discussion: DiscussionState;
   readonly groups: ReadonlyArray<CardGroup>;
   readonly cards: ReadonlyArray<RetroCard>;
   readonly rankedGroupIds: ReadonlyArray<string>;
   readonly actionItems: ReadonlyArray<ActionItem>;
   readonly participants: ReadonlyArray<Participant>;
   readonly isFacilitator: boolean;
+  readonly onSetTimer: (seconds: number) => void;
+  readonly onToggleTimer: () => void;
   readonly onAddItem: (
     text: string,
     assignees: ReadonlyArray<string>,
@@ -50,13 +60,118 @@ const CATEGORY_COLOR: Record<CardCategory, string> = {
   confused: "text-confused",
 };
 
+function formatClock(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+const TIMER_PRESETS = [2, 5, 10] as const;
+
+function DiscussionClock({
+  discussion,
+  isFacilitator,
+  onSetTimer,
+  onToggleTimer,
+}: {
+  discussion: DiscussionState;
+  isFacilitator: boolean;
+  onSetTimer: (seconds: number) => void;
+  onToggleTimer: () => void;
+}) {
+  const [minutes, setMinutes] = useState(
+    String(Math.round(discussion.timerSeconds / 60)),
+  );
+  const expired = discussion.timerRemaining <= 0;
+  const warning = discussion.timerRemaining <= 30 && discussion.timerRemaining > 0;
+
+  const applyMinutes = (value: number) => {
+    if (!Number.isFinite(value)) return;
+    const seconds = Math.round(value * 60);
+    if (seconds < MIN_TIMER_SECONDS || seconds > MAX_TIMER_SECONDS) return;
+    setMinutes(String(value));
+    onSetTimer(seconds);
+  };
+
+  return (
+    <div className="mt-4 flex flex-col items-center gap-3">
+      <div
+        className={cn(
+          "flex h-20 w-20 items-center justify-center rounded-full border-4 font-mono text-xl font-bold",
+          expired && "border-destructive text-destructive",
+          warning && !expired && "border-warning text-warning",
+          !warning && !expired && "border-primary text-primary",
+        )}
+        aria-label="Discussion clock"
+      >
+        {formatClock(discussion.timerRemaining)}
+      </div>
+      {isFacilitator && (
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          {TIMER_PRESETS.map((preset) => (
+            <Button
+              key={preset}
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8"
+              onClick={() => applyMinutes(preset)}
+            >
+              {preset} min
+            </Button>
+          ))}
+          <Input
+            type="number"
+            min={1}
+            max={60}
+            value={minutes}
+            aria-label="Clock length in minutes"
+            onChange={(event) => setMinutes(event.target.value)}
+            className="h-8 w-16 text-center"
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8"
+            onClick={() => applyMinutes(Number(minutes))}
+          >
+            Set
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5"
+            onClick={onToggleTimer}
+          >
+            {discussion.timerRunning ? (
+              <>
+                <Pause width={14} height={14} /> Pause
+              </>
+            ) : (
+              <>
+                <Play width={14} height={14} /> {expired ? "Restart" : "Start"}
+              </>
+            )}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function DiscussActPhase({
+  phase,
+  discussion,
   groups,
   cards,
   rankedGroupIds,
   actionItems,
   participants,
   isFacilitator,
+  onSetTimer,
+  onToggleTimer,
   onAddItem,
   onRemoveItem,
   onClose,
@@ -88,6 +203,14 @@ export function DiscussActPhase({
           Talk through each topic. Write action items as you go. This is your
           retro snapshot.
         </p>
+        {phase === "discussing" && (
+          <DiscussionClock
+            discussion={discussion}
+            isFacilitator={isFacilitator}
+            onSetTimer={onSetTimer}
+            onToggleTimer={onToggleTimer}
+          />
+        )}
       </div>
 
       {/* Ranked topics with stagger animation */}
