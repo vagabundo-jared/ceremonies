@@ -10,7 +10,7 @@ export default async function Image() {
     (
       <div
         style={{
-          background: "linear-gradient(135deg, #1a120b 0%, #2D1E14 50%, #1a120b 100%)",
+          background: "linear-gradient(135deg, #161818 0%, #2A2D2D 50%, #161818 100%)",
           width: "100%",
           height: "100%",
           display: "flex",
@@ -90,7 +90,7 @@ export default async function Image() {
                 padding: "8px 20px",
                 fontSize: 18,
                 fontWeight: 600,
-                color: "#ffa532",
+                color: "#3BBFC0",
               }}
             >
               {label}

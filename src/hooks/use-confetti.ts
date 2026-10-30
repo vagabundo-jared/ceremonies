@@ -23,11 +23,11 @@ export function useConfetti() {
       decay: 0.94,
       startVelocity: 30,
       colors: [
-        "#6186FF", // cornflower
-        "#5F36F5", // violet
-        "#C6DFFF", // sky blue
+        "#3BBFC0", // Legal1Up teal
+        "#B09EFF", // Legal1Up lavender
+        "#A6EEEF", // light teal
         "#f5f5f5", // white
-        "#01B979", // emerald
+        "#10A56C", // green
       ],
     };
 
